@@ -1,0 +1,37 @@
+# ~/.config/homelab-dash/config.toml  (chmod 600: contiene segreti)
+# Togli una sezione per nascondere la sorgente.
+
+[pve]
+url = "https://pve-a.lan:8006"          # un nodo qualsiasi del cluster
+token_id = "dashboard@pve!tui"          # utente con ruolo PVEAuditor su /
+token_secret = "00000000-0000-0000-0000-000000000000"
+verify_tls = false                      # oppure path del CA: "/etc/ssl/certs/homelab-ca.pem"
+ceph = false                            # true solo se il cluster ha Ceph
+interval = 5
+hide_storage = ["local"]                # storage da non mostrare
+
+[opnsense]
+url = "https://fw.lan"
+key = "API_KEY"
+secret = "API_SECRET"
+verify_tls = false
+wan = ["wan1", "wan2"]                  # id interno (wan, opt1) o descrizione; una o più WAN
+top_interfaces = ["lan"]                # interfacce su cui calcolare i top host
+interval = 2
+top_interval = 6
+
+[opnsense.names]                        # nomi per IP senza reverse DNS
+"192.168.10.30" = "qnap"
+
+# Uno o più NAS: ripeti il blocco [[qnap]]
+[[qnap]]
+name = "nas-main"
+host = "192.168.10.30"
+community = "public"                    # SNMP v2c, solo lettura
+interval = 30
+# hide_volumes = ["Scratch"]            # volumi da non mostrare
+
+[[qnap]]
+name = "nas-backup"
+host = "192.168.10.31"
+community = "public"

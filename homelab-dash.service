@@ -1,0 +1,27 @@
+# /etc/systemd/system/homelab-dash.service
+[Unit]
+Description=Homelab dashboard (cage + foot su tty1)
+Wants=network-online.target
+After=network-online.target systemd-user-sessions.service getty@tty1.service
+Conflicts=getty@tty1.service
+
+[Service]
+User=dash
+PAMName=login
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty1
+UtmpMode=user
+Environment=XDG_SESSION_TYPE=wayland
+Environment=LANG=C.UTF-8
+ExecStart=/usr/bin/cage -d -- /usr/bin/foot /home/dash/homelab-dash/.venv/bin/python /home/dash/homelab-dash/dashboard.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
