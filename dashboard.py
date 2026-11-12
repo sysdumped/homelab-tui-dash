@@ -110,6 +110,56 @@ class PVE:
             timeout=8,
         )
         self.prev_net: dict[int, tuple[float, int, int]] = {}
+        # vmid -> (scadenza, % disco o None); le VM QEMU passano dal guest agent
+        self.disk_cache: dict[int, tuple[float, float | None]] = {}
+        self.disk_sem = asyncio.Semaphore(4)
+
+    # filesystem da ignorare nel calcolo dello spazio (virtuali, read-only, CD)
+    SKIP_FS = {"tmpfs", "devtmpfs", "squashfs", "overlay", "iso9660", "udf", "cdfs", "ramfs",
+               "proc", "sysfs", "efivarfs", "vfat", "fat32"}
+
+    async def _qemu_disk(self, node: str, vmid: int) -> float | None:
+        """% del filesystem più pieno secondo il guest agent; None se l'agent non risponde."""
+        async with self.disk_sem:
+            try:
+                data = await self._get(f"/nodes/{node}/qemu/{vmid}/agent/get-fsinfo")
+            except Exception:
+                return None
+        fss = data.get("result", data) if isinstance(data, dict) else data
+        worst, seen = None, set()
+        for fs in fss or []:
+            total, used = fs.get("total-bytes"), fs.get("used-bytes")
+            if not total or used is None or str(fs.get("type", "")).lower() in self.SKIP_FS:
+                continue
+            key = fs.get("name") or fs.get("mountpoint")
+            if key in seen:            # bind mount dello stesso device
+                continue
+            seen.add(key)
+            p = used / total * 100
+            worst = p if worst is None else max(worst, p)
+        return worst
+
+    async def _fill_disk(self, guests: list[dict]) -> None:
+        now = time.monotonic()
+        ttl = self.c.get("vm_disk_interval", 60)
+        todo = []
+        for g in guests:
+            vmid = g.get("vmid")
+            if g.get("type") == "lxc":
+                # per i container PVE riporta già l'occupazione reale del rootfs
+                g["disk_pct"] = g["disk"] / g["maxdisk"] * 100 if g.get("maxdisk") else None
+                continue
+            exp, val = self.disk_cache.get(vmid, (0, None))
+            g["disk_pct"] = val
+            if now >= exp:
+                todo.append(g)
+        if not todo:
+            return
+        vals = await asyncio.gather(*(self._qemu_disk(g["node"], g["vmid"]) for g in todo))
+        for g, v in zip(todo, vals):
+            # senza agent riprova meno spesso, per non bussare inutilmente ogni minuto
+            self.disk_cache[g["vmid"]] = (now + (ttl if v is not None else ttl * 5), v)
+            g["disk_pct"] = v
 
     async def _get(self, path: str):
         r = await self.http.get(path)
@@ -132,6 +182,8 @@ class PVE:
                 g["rate"] = 0
             self.prev_net[g.get("vmid")] = (now, nin, nout)
             guests.append(g)
+        if self.c.get("vm_disk", True):
+            await self._fill_disk(guests)
 
         storage, seen = [], set()
         for s in res:
@@ -323,7 +375,9 @@ class Demo:
                  "librenms", "checkmk", "n8n", "rproxy", "netbox", "openobserve", "guac"]
         guests = [{"vmid": 100 + i, "name": n, "type": "qemu", "node": random.choice(nodes)["node"],
                    "cpu": random.betavariate(1.2, 6), "mem": random.uniform(.2, .9) * 8e9,
-                   "maxmem": 8e9, "rate": random.expovariate(1 / 4e6)} for i, n in enumerate(names)]
+                   "maxmem": 8e9, "rate": random.expovariate(1 / 4e6),
+                   "disk_pct": None if n in ("guac", "n8n") else random.uniform(15, 95)}
+                  for i, n in enumerate(names)]
         storage = [{"label": "ceph-rbd", "disk": 3.1e12, "maxdisk": 7.2e12},
                    {"label": "cephfs", "disk": 0.8e12, "maxdisk": 7.2e12},
                    {"label": "pve-a/local", "disk": 88e9, "maxdisk": 98e9}]
@@ -427,18 +481,19 @@ def pct(p: float, warn: float = 70, crit: float = 90) -> Text:
 
 def render_guests(guests: list[dict], n: int = 16) -> Table:
     t = Table(box=None, expand=True, pad_edge=False, header_style="bold grey62")
-    t.add_column("id", style="grey62", no_wrap=True)
     t.add_column("nome", no_wrap=True, overflow="ellipsis", ratio=1)
     t.add_column("nodo", style="grey62", no_wrap=True)
     t.add_column("CPU", justify="right", no_wrap=True)
     t.add_column("RAM", justify="right", no_wrap=True)
+    t.add_column("disco", justify="right", no_wrap=True)
     t.add_column("rete", justify="right", no_wrap=True)
     for g in sorted(guests, key=lambda g: g.get("cpu", 0), reverse=True)[:n]:
         icon = "▣ " if g["type"] == "qemu" else "◇ "
         mem = g.get("mem", 0) / g["maxmem"] * 100 if g.get("maxmem") else 0
-        t.add_row(str(g.get("vmid", "?")), icon + g.get("name", "?"), g.get("node", "?"),
-                  pct(g.get("cpu", 0) * 100),
-                  pct(mem, 85, 95), hbits(g.get("rate", 0)))
+        dp = g.get("disk_pct")
+        disk = pct(dp, 80, 90) if dp is not None else Text("  —", style="grey42")
+        t.add_row(icon + g.get("name", "?"), g.get("node", "?"), pct(g.get("cpu", 0) * 100),
+                  pct(mem, 85, 95), disk, hbits(g.get("rate", 0)))
     return t
 
 

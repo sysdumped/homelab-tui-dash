@@ -9,7 +9,7 @@ Pensata per un mini PC con un monitor 1366×768 (Dell E1609Wc) in modalità kios
 | Pannello | Contenuto |
 |---|---|
 | **Proxmox VE** | CPU/RAM/uptime dei nodi, Ceph (opzionale), occupazione storage |
-| **Guest per CPU** | VM/LXC in esecuzione ordinate per CPU, con RAM e traffico di rete |
+| **Guest per CPU** | VM/LXC in esecuzione ordinate per CPU, con RAM, disco e traffico di rete |
 | **Internet · OPNsense** | Banda WAN in tempo reale (anche multi-WAN), sparkline, stato gateway |
 | **QNAP** | Per ogni NAS: temperatura, CPU, RAM, volumi, temperatura e SMART dei dischi |
 | **Top host per banda** | Host LAN con più traffico (download/upload) |
@@ -50,6 +50,8 @@ a `python` rotto e foot esce con codice 230.
 Parti da `config.example.toml`. Togli una sezione per nascondere quella sorgente.
 
 - **PVE**: `ceph = true` solo se il cluster ha Ceph. `hide_storage` nasconde gli storage indicati.
+  La colonna **disco** mostra il filesystem più pieno del guest: per gli LXC il dato arriva da PVE,
+  per le VM serve `qemu-guest-agent` attivo nella VM. Senza agent compare `—`.
 - **OPNsense**
   - `wan` accetta id interni o descrizioni, anche più WAN: `wan = ["wan1", "wan2"]`.
   - `top_interfaces` accetta **solo id interni** (`lan`, `opt1`…): con nomi sconosciuti l'API risponde `[]`.
@@ -70,6 +72,13 @@ Parti da `config.example.toml`. Togli una sezione per nascondere quella sorgente
   pveum user token add dashboard@pve tui
   pveum acl modify / --users dashboard@pve --roles PVEAuditor
   pveum acl modify / --tokens 'dashboard@pve!tui' --roles PVEAuditor
+  ```
+  Se la colonna disco resta `—` anche per VM con l'agent attivo, al token manca il permesso di
+  leggere il guest agent (`VM.GuestAgent.Audit` su PVE 9, `VM.Monitor` su PVE 8):
+  ```bash
+  pveum role add DashAgent -privs VM.GuestAgent.Audit      # PVE 8: -privs VM.Monitor
+  pveum acl modify /vms --users dashboard@pve --roles DashAgent
+  pveum acl modify /vms --tokens 'dashboard@pve!tui' --roles DashAgent
   ```
 - **OPNsense**: utente dedicato con chiave API e privilegi *Diagnostics: Traffic* e *Status: Gateways*.
 - **QNAP**: SNMP v1/v2 attivo (Pannello di controllo → Rete e servizi file → SNMP), community di sola

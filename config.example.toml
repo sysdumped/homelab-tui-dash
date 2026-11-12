@@ -9,6 +9,8 @@ verify_tls = false                      # oppure path del CA: "/etc/ssl/certs/ho
 ceph = false                            # true solo se il cluster ha Ceph
 interval = 5
 hide_storage = ["local"]                # storage da non mostrare
+vm_disk = true                          # colonna disco: LXC nativo, VM via qemu-guest-agent
+vm_disk_interval = 60                   # secondi tra una lettura e l'altra del guest agent
 
 [opnsense]
 url = "https://fw.lan"
